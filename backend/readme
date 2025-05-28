@@ -1,0 +1,75 @@
+# AI-Powered Log Anomaly Detection and Response System
+
+## Setup and Running Instructions
+
+This guide provides step-by-step instructions to start Fluent Bit for log collection, run the FastAPI backend, and verify collected logs in MongoDB.
+
+---
+
+## **1. Start Fluent Bit**
+Fluent Bit is responsible for collecting Windows Event Logs and forwarding them to the FastAPI backend.
+
+### **Run Fluent Bit**
+1. Open **Command Prompt** as Administrator.
+2. Navigate to the Fluent Bit directory:
+   ```sh
+   cd C:\fluent-bit\fluent-bit-3.2.6-win64
+   ```
+3. Start Fluent Bit with the configuration file:
+   ```sh
+   bin\fluent-bit.exe -c conf\fluent-bit.conf
+   ```
+4. Check the output to ensure logs are being sent to the backend.
+
+---
+
+## **2. Start the FastAPI Backend**
+FastAPI processes logs received from Fluent Bit and stores them in MongoDB.
+
+### **Run FastAPI Backend**
+1. Open **Command Prompt** or **PowerShell**.
+2. Navigate to the backend directory:
+   ```sh
+   cd C:\Users\cosym\OneDrive\Desktop\PROJECTS\my-project\backend
+   ```
+3. Start FastAPI using Uvicorn:
+   ```sh
+   uvicorn main:app --host 0.0.0.0 --port 5000 --reload --log-level debug
+   ```
+4. Ensure FastAPI prints logs indicating it has started and is receiving logs from Fluent Bit.
+
+---
+
+## **3. Verify Logs in MongoDB**
+MongoDB stores the collected logs, and you can check them using the MongoDB shell.
+
+### **Check Stored Logs**
+1. Open **Command Prompt**.
+2. Start the MongoDB shell:
+   ```sh
+   mongo
+   ```
+3. Switch to the database:
+   ```sh
+   use log_anomaly
+   ```
+4. Retrieve and display the collected logs:
+   ```sh
+   db.logs.find().pretty()
+   ```
+
+---
+
+## **Troubleshooting**
+- **Fluent Bit is not sending logs?**
+  - Ensure Fluent Bit is running as Administrator.
+  - Check the configuration in `conf\fluent-bit.conf`.
+  - Restart Fluent Bit and FastAPI.
+
+- **FastAPI shows errors?**
+  - Ensure MongoDB is running.
+  - Restart FastAPI and check its logs for debugging.
+
+- **No logs in MongoDB?**
+  - Verify Fluent Bit is sending logs by checking FastAPI's console output.
+  - Run `db.logs.count()`
