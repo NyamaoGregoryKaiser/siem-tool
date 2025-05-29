@@ -76,6 +76,62 @@ const dummyIpData = [
 const WorldMap = () => {
   const geoUrl = "/world-110m.json";
   const [position, setPosition] = useState({ coordinates: [0, 0], zoom: 1 });
+  const [ipLocations, setIpLocations] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCriticalAlerts = async () => {
+      try {
+        // Fetch latest critical alerts
+        const response = await api.get('/logs/analytics/critical-alerts');
+        const alerts = response.data;
+        console.log("Fetched critical alerts:", alerts);
+
+        // Get unique IPs from alerts
+        const uniqueIPs = [...new Set(alerts.map(alert => alert.source_ip).filter(ip => ip))];
+        console.log("Unique IPs from alerts:", uniqueIPs);
+
+        // Get locations for each IP
+        const locations = await Promise.all(
+          uniqueIPs.map(async (ip) => {
+            try {
+              const response = await api.get(`/logs/analytics/ip-location/${ip}`);
+              if (response.data && response.data.latitude && response.data.longitude) {
+                // Count occurrences of this IP in alerts
+                const count = alerts.filter(alert => alert.source_ip === ip).length;
+                return {
+                  ip,
+                  coordinates: [response.data.longitude, response.data.latitude],
+                  count,
+                  city: response.data.city,
+                  country: response.data.country
+                };
+              }
+              return null;
+            } catch (error) {
+              console.error(`Error fetching location for IP ${ip}:`, error);
+              return null;
+            }
+          })
+        );
+
+        // Filter out null locations and set state
+        const validLocations = locations.filter(loc => loc !== null);
+        console.log("Valid locations for map:", validLocations);
+        setIpLocations(validLocations);
+      } catch (error) {
+        console.error('Error fetching critical alerts:', error);
+        setIpLocations([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCriticalAlerts();
+    // Refresh every 5 minutes
+    const interval = setInterval(fetchCriticalAlerts, 300000);
+    return () => clearInterval(interval);
+  }, []);
 
   function handleZoomIn() {
     if (position.zoom >= 4) return;
@@ -112,51 +168,92 @@ const WorldMap = () => {
             </svg>
           </button>
         </div>
-        <ComposableMap
-          projection="geoMercator"
-          projectionConfig={{
-            scale: 180,
-            center: [0, 0]
-          }}
-          style={{
-            width: "100%",
-            height: "100%"
-          }}
-        >
-          <ZoomableGroup
-            zoom={position.zoom}
-            center={position.coordinates}
-            minZoom={1}
-            maxZoom={4}
+        {loading ? (
+          <div className="h-full flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          </div>
+        ) : (
+          <ComposableMap
+            projection="geoMercator"
+            projectionConfig={{
+              scale: 180,
+              center: [0, 0]
+            }}
+            style={{
+              width: "100%",
+              height: "100%"
+            }}
           >
-            <Geographies geography={geoUrl}>
-              {({ geographies }) =>
-                geographies.map(geo => (
-                  <Geography 
-                    key={geo.rsmKey} 
-                    geography={geo}
-                    fill="#EAEAEC"
-                    stroke="#D6D6DA"
-                    strokeWidth={0.5}
+            <ZoomableGroup
+              zoom={position.zoom}
+              center={position.coordinates}
+              minZoom={1}
+              maxZoom={4}
+            >
+              <Geographies geography={geoUrl}>
+                {({ geographies }) =>
+                  geographies.map(geo => (
+                    <Geography 
+                      key={geo.rsmKey} 
+                      geography={geo}
+                      fill="#EAEAEC"
+                      stroke="#D6D6DA"
+                      strokeWidth={0.5}
+                      style={{
+                        default: {
+                          outline: "none"
+                        },
+                        hover: {
+                          fill: "#F5F4F6",
+                          outline: "none"
+                        },
+                        pressed: {
+                          fill: "#E42",
+                          outline: "none"
+                        }
+                      }}
+                    />
+                  ))
+                }
+              </Geographies>
+              {ipLocations.map(({ coordinates, count, ip, city, country }) => (
+                <Marker key={ip} coordinates={coordinates}>
+                  <circle
+                    r={Math.sqrt(count) * 2}
+                    fill="#FF0000"
+                    stroke="#CC0000"
+                    strokeWidth={2}
                     style={{
-                      default: {
-                        outline: "none"
-                      },
-                      hover: {
-                        fill: "#F5F4F6",
-                        outline: "none"
-                      },
-                      pressed: {
-                        fill: "#E42",
-                        outline: "none"
-                      }
+                      cursor: "pointer"
                     }}
                   />
-                ))
-              }
-            </Geographies>
-          </ZoomableGroup>
-        </ComposableMap>
+                  <text
+                    textAnchor="middle"
+                    y={-10}
+                    style={{
+                      fontFamily: "system-ui",
+                      fill: "#5D5A6D",
+                      fontSize: "10px"
+                    }}
+                  >
+                    {`${ip} (${count})`}
+                  </text>
+                  <text
+                    textAnchor="middle"
+                    y={5}
+                    style={{
+                      fontFamily: "system-ui",
+                      fill: "#5D5A6D",
+                      fontSize: "8px"
+                    }}
+                  >
+                    {`${city}, ${country}`}
+                  </text>
+                </Marker>
+              ))}
+            </ZoomableGroup>
+          </ComposableMap>
+        )}
       </div>
     </div>
   );
@@ -701,7 +798,7 @@ const Dashboard = () => {
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-800">Critical Alerts</h2>
-          <span className="text-sm text-gray-500">Last 10 hours</span>
+          <span className="text-sm text-gray-500">Latest Alerts</span>
         </div>
         {criticalAlertsLoading ? (
           <div className="flex justify-center items-center h-32">
@@ -710,7 +807,7 @@ const Dashboard = () => {
         ) : criticalAlertsError ? (
           <div className="text-red-500 text-center p-4">{criticalAlertsError}</div>
         ) : criticalAlerts.length === 0 ? (
-          <div className="text-gray-500 text-center p-4">No critical alerts in the past 10 hours</div>
+          <div className="text-gray-500 text-center p-4">No critical alerts found</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">

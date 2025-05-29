@@ -42,6 +42,88 @@ start_date = datetime(2025, 3, 1, tzinfo=timezone.utc)
 end_date = datetime(2025, 5, 30, tzinfo=timezone.utc)
 date_range = (end_date - start_date).days
 
+# Add IP range definitions
+IP_RANGES = {
+    'kenya': {
+        'safaricom': {
+            'base': '197.232',
+            'range': 235,  # 197.232.0.0 - 197.235.255.255
+            'weight': 0.5  # 50% of Kenyan IPs
+        },
+        'telkom': {
+            'base': '196.202',
+            'range': 202,  # 196.202.0.0 - 196.202.255.255
+            'weight': 0.3  # 30% of Kenyan IPs
+        },
+        'jamii': {
+            'base': '41.89',
+            'range': 89,   # 41.89.0.0 - 41.89.255.255
+            'weight': 0.2  # 20% of Kenyan IPs
+        }
+    },
+    'foreign': {
+        'nigeria': {
+            'mtn': {'base': '102.89', 'range': 89},
+            'globacom': {'base': '197.211', 'range': 211},
+            'airtel': {'base': '154.113', 'range': 113}
+        },
+        'south_africa': {
+            'vodacom': {'base': '41.0', 'range': 127},
+            'mtn': {'base': '197.80', 'range': 87},
+            'afrihost': {'base': '169.239', 'range': 239}
+        },
+        'india': {
+            'jio': {'base': '49.32', 'range': 63},
+            'airtel': {'base': '125.16', 'range': 23},
+            'bsnl': {'base': '117.192', 'range': 207}
+        }
+    }
+}
+
+def generate_random_ip(base, subnet_range):
+    """Generate a random IP address within a given subnet range"""
+    base_parts = base.split('.')
+    ip_parts = [
+        base_parts[0],
+        str(random.randint(int(base_parts[1]), subnet_range)),
+        str(random.randint(0, 255)),
+        str(random.randint(0, 255))
+    ]
+    return '.'.join(ip_parts)
+
+def get_ip_for_event(severity_level, is_anomalous=False):
+    """
+    Generate an IP address based on event severity and anomaly status.
+    Higher severity events are more likely to come from foreign IPs.
+    """
+    # 95% of events should be from Kenya
+    if random.random() < 0.95:
+        # Select Kenyan provider based on weights
+        provider = random.choices(
+            list(IP_RANGES['kenya'].keys()),
+            weights=[p['weight'] for p in IP_RANGES['kenya'].values()]
+        )[0]
+        ip_range = IP_RANGES['kenya'][provider]
+        return generate_random_ip(ip_range['base'], ip_range['range'])
+    else:
+        # 5% of events come from foreign IPs
+        # Higher severity events are more likely to be foreign
+        if severity_level <= 2 or is_anomalous:  # Critical or High severity
+            # 80% chance of foreign IP for critical/high events
+            if random.random() < 0.8:
+                country = random.choice(list(IP_RANGES['foreign'].keys()))
+                provider = random.choice(list(IP_RANGES['foreign'][country].keys()))
+                ip_range = IP_RANGES['foreign'][country][provider]
+                return generate_random_ip(ip_range['base'], ip_range['range'])
+        
+        # Fallback to Kenyan IP
+        provider = random.choices(
+            list(IP_RANGES['kenya'].keys()),
+            weights=[p['weight'] for p in IP_RANGES['kenya'].values()]
+        )[0]
+        ip_range = IP_RANGES['kenya'][provider]
+        return generate_random_ip(ip_range['base'], ip_range['range'])
+
 class AILogSequenceModel:
     """
     An AI model for generating realistic log sequences using transition probabilities
@@ -609,12 +691,65 @@ def generate_realistic_message(event_type, event_id, account, device, session_id
     
     return base_message
 
+def generate_realistic_time(log_date, is_anomalous=False):
+    """
+    Generate a realistic timestamp based on the base date and anomaly status.
+    Anomalous events are more likely to occur during off-hours.
+    """
+    # Define time patterns
+    working_hours = {
+        'start': 8,  # 8 AM
+        'end': 17,   # 5 PM
+        'lunch_start': 12,  # 12 PM
+        'lunch_end': 13     # 1 PM
+    }
+    
+    # Get hour and minute
+    hour = log_date.hour
+    minute = log_date.minute
+    
+    if is_anomalous:
+        # Anomalous events are more likely during off-hours
+        if random.random() < 0.7:  # 70% chance of off-hours
+            # Off-hours: 6 PM - 7 AM
+            hour = random.randint(18, 23) if random.random() < 0.5 else random.randint(0, 7)
+        else:
+            # During working hours but at unusual times
+            hour = random.randint(working_hours['start'], working_hours['end'])
+            if working_hours['lunch_start'] <= hour <= working_hours['lunch_end']:
+                hour = random.choice([working_hours['lunch_start'] - 1, working_hours['lunch_end'] + 1])
+    else:
+        # Normal events follow working hours pattern
+        if random.random() < 0.9:  # 90% chance during working hours
+            hour = random.randint(working_hours['start'], working_hours['end'])
+            # Avoid lunch hour for normal events
+            if working_hours['lunch_start'] <= hour <= working_hours['lunch_end']:
+                hour = random.choice([working_hours['lunch_start'] - 1, working_hours['lunch_end'] + 1])
+        else:
+            # Some normal events can occur during off-hours
+            hour = random.randint(18, 23) if random.random() < 0.5 else random.randint(0, 7)
+    
+    # Generate realistic minute
+    minute = random.randint(0, 59)
+    
+    # Create new datetime with generated hour and minute
+    new_time = log_date.replace(hour=hour, minute=minute)
+    
+    # Ensure the time is within the valid range
+    if new_time < log_date:
+        new_time = log_date
+    
+    return new_time
+
 def generate_log_entry(event_type, account, device, session_id, log_date, sequence_gen, anomalous=False):
     """Generate a complete log entry"""
     event_id = sequence_gen.generate_event_id(event_type)
     message = generate_realistic_message(event_type, event_id, account, device, session_id, log_date, sequence_gen, anomalous)
     
-    # Base severity mapping
+    # Generate realistic timestamp
+    generated_time = generate_realistic_time(log_date, anomalous)
+    
+    # Base severity mapping with reduced failure rates
     base_severity_mapping = {
         'logon_attempt': {'level': 4, 'event_type': 'SuccessAudit', 'status': 'Information'},
         'logon_success': {'level': 4, 'event_type': 'SuccessAudit', 'status': 'Information'},
@@ -659,18 +794,38 @@ def generate_log_entry(event_type, account, device, session_id, log_date, sequen
                 'status': 'Information'
             }
     
+    # Generate IP based on severity and anomaly status
+    source_ip = get_ip_for_event(severity_info['level'], anomalous)
+    
     # Determine if we should include a technique
     technique = None
     if severity_info['level'] <= 2:  # Critical or High severity
-        techniques = {
-            'logon_failure': 'T1110',  # Brute Force
-            'multiple_failures': 'T1110.001',  # Password Guessing
-            'explicit_logon': 'T1078',  # Valid Accounts
-            'credential_read': 'T1098',  # Account Manipulation
-            'service_install': 'T1218',  # Signed Binary Proxy Execution
-            'special_privileges': 'T1098'  # Account Manipulation
+        # Define technique probabilities
+        technique_weights = {
+            'T1110.001': 0.40,  # Brute Force: Password Guessing (40%)
+            'T1098': 0.30,      # Account Manipulation (30%)
+            'T1218': 0.30       # Signed Binary Proxy Execution (30%)
         }
-        technique = techniques.get(event_type)
+        
+        # Map event types to techniques
+        event_technique_mapping = {
+            'logon_failure': 'T1110.001',
+            'multiple_failures': 'T1110.001',
+            'credential_read': 'T1098',
+            'special_privileges': 'T1098',
+            'service_install': 'T1218',
+            'service_start': 'T1218'
+        }
+        
+        # If the event type has a specific technique, use it
+        if event_type in event_technique_mapping:
+            technique = event_technique_mapping[event_type]
+        else:
+            # Otherwise, randomly select a technique based on weights
+            technique = random.choices(
+                list(technique_weights.keys()),
+                weights=list(technique_weights.values())
+            )[0]
     
     # Generate realistic OS information
     os_versions = {
@@ -681,8 +836,8 @@ def generate_log_entry(event_type, account, device, session_id, log_date, sequen
     
     # Generate the log entry
     log_entry = {
-        "TimeGenerated": log_date.strftime('%Y-%m-%d %H:%M:%S +0300'),
-        "TimeWritten": log_date.strftime('%Y-%m-%d %H:%M:%S +0300'),
+        "TimeGenerated": generated_time.strftime('%Y-%m-%d %H:%M:%S +0300'),
+        "TimeWritten": generated_time.strftime('%Y-%m-%d %H:%M:%S +0300'),
         "EventID": event_id,
         "Level": severity_info['level'],
         "EventType": severity_info['event_type'],
@@ -692,7 +847,7 @@ def generate_log_entry(event_type, account, device, session_id, log_date, sequen
         "AccountName": account['name'],
         "AccountSID": account['sid'],
         "SessionID": session_id,
-        "SourceIP": f"192.168.{random.randint(1, 254)}.{random.randint(1, 254)}",
+        "SourceIP": source_ip,
         "LogonType": 3 if 'explicit' in event_type else 2,
         "Status": severity_info['status'],
         "OperatingSystem": os_versions.get(device, "Windows 10 Pro"),
@@ -700,6 +855,57 @@ def generate_log_entry(event_type, account, device, session_id, log_date, sequen
     }
     
     return log_entry
+
+def calculate_daily_log_count(total_logs, start_date, end_date):
+    """Calculate the number of logs to generate per day with random variation"""
+    days = (end_date - start_date).days + 1
+    
+    # Base number of logs per day
+    base_logs_per_day = 100000
+    
+    # Generate daily counts with random variation of ±15,000
+    daily_counts = []
+    for _ in range(days):
+        # Generate random variation between -15,000 and +15,000
+        variation = random.randint(-15000, 15000)
+        # Calculate daily count ensuring it's not negative
+        daily_count = max(base_logs_per_day + variation, 1000)  # Ensure at least 1000 logs per day
+        daily_counts.append(daily_count)
+    
+    return daily_counts
+
+def generate_balanced_dates(start_date, end_date, num_events):
+    """Generate balanced dates across the date range"""
+    # Calculate logs per day
+    daily_counts = calculate_daily_log_count(num_events, start_date, end_date)
+    
+    # Generate dates
+    dates = []
+    current_date = start_date
+    
+    for count in daily_counts:
+        # Generate timestamps for this day
+        for _ in range(count):
+            # Generate random time during the day
+            hour = random.randint(0, 23)
+            minute = random.randint(0, 59)
+            second = random.randint(0, 59)
+            
+            # Create datetime with random time
+            event_time = current_date.replace(
+                hour=hour,
+                minute=minute,
+                second=second,
+                microsecond=random.randint(0, 999999)
+            )
+            dates.append(event_time)
+        
+        # Move to next day
+        current_date += timedelta(days=1)
+    
+    # Shuffle dates to avoid obvious patterns
+    random.shuffle(dates)
+    return dates
 
 def main():
     parser = argparse.ArgumentParser(description='Generate realistic security logs')
@@ -712,7 +918,7 @@ def main():
     # Initialize MongoDB connection
     try:
         client = MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=5000)
-        client.server_info()  # Will raise an error if MongoDB is not running
+        client.server_info()
         db = client["log_anomaly"]
         collection = db["logs"]
         print("Successfully connected to MongoDB")
@@ -732,29 +938,23 @@ def main():
     # Initialize the sequence generator
     sequence_gen = LogSequenceGenerator()
     
-    # Get the last generated date from MongoDB
-    try:
-        last_entry = collection.find_one(sort=[("TimeGenerated", -1)])
-        if last_entry:
-            # Parse the string date into datetime object
-            start_date = datetime.strptime(last_entry["TimeGenerated"], '%Y-%m-%d %H:%M:%S +0300')
-            # Add timezone info
-            start_date = start_date.replace(tzinfo=timezone(timedelta(hours=3)))
-        else:
-            # Start from March 1st, 2025 if no previous entries exist
-            start_date = datetime(2025, 3, 1, tzinfo=timezone(timedelta(hours=3)))
-    except Exception as e:
-        print(f"\nError accessing MongoDB: {e}")
-        print("Please check your MongoDB connection and try again.")
-        return
+    # Set date range from March 5th to current date
+    start_date = datetime(2025, 3, 5, tzinfo=timezone(timedelta(hours=3)))
+    end_date = datetime.now(timezone(timedelta(hours=3)))
     
-    print(f"Starting log generation from {start_date.date()}...")
-    print(f"Generating {args.lps} logs per second (security system rate)")
+    # Calculate total number of events (100,000 ±15,000 per day)
+    days = (end_date - start_date).days + 1
+    daily_counts = calculate_daily_log_count(None, start_date, end_date)
+    total_events = sum(daily_counts)
+    
+    print(f"Starting log generation from {start_date.date()} to {end_date.date()}...")
+    print(f"Generating approximately 100,000 logs per day (±15,000 variation)")
+    print(f"Total events to generate: {total_events:,.0f}")
     print(f"Using batch size of {args.batch_size} logs")
     print("Press Ctrl+C to stop the script")
-    print("\n" * (args.show_logs + 2))  # Reserve space for logs and stats
+    print("\n" * (args.show_logs + 2))
     
-    # Pre-generate some common values to reduce overhead
+    # Pre-generate some common values
     devices_list = list(devices)
     num_devices = len(devices_list)
     
@@ -762,40 +962,21 @@ def main():
     device_counts = {device: 0 for device in devices_list}
     total_count = 0
     last_print_time = time.time()
-    print_interval = 0.5  # Print stats every 0.5 seconds
-    recent_logs = []  # Store recent logs for display
+    print_interval = 0.5
+    recent_logs = []
     
     try:
-        while True:
-            # Get current time in UTC
-            current_time = datetime.now(timezone.utc)
-            
-            # Calculate time elapsed since last generation
-            time_elapsed = current_time - start_date
-            if time_elapsed.total_seconds() < 0:
-                time_elapsed = timedelta(seconds=0)
-            
-            # Calculate number of events to generate based on elapsed time and LPS
-            num_events = int(args.lps * time_elapsed.total_seconds())
-            
-            # Ensure we generate at least one batch per iteration
-            if num_events < args.batch_size:
-                num_events = args.batch_size
-            
-            # Generate events in optimized batches
-            for i in range(0, num_events, args.batch_size):
-                current_batch = min(args.batch_size, num_events - i)
+        # Generate balanced dates for all events
+        event_dates = generate_balanced_dates(start_date, end_date, total_events)
+        
+        # Process events in batches
+        for i in range(0, len(event_dates), args.batch_size):
+            current_batch = min(args.batch_size, len(event_dates) - i)
                 batch_logs = []
                 
-                # Pre-calculate time range for this batch
-                time_range = int(time_elapsed.total_seconds())
-                
                 # Generate batch of events
-                for _ in range(current_batch):
-                    # Generate event time within the elapsed period
-                    event_time = start_date + timedelta(
-                        seconds=random.randint(0, time_range)
-                    )
+            for j in range(current_batch):
+                event_time = event_dates[i + j]
                     
                     # Randomly select a device
                     device = devices_list[random.randint(0, num_devices - 1)]
@@ -852,9 +1033,6 @@ def main():
                             print("Please check your MongoDB connection and restart the script.")
                             return
             
-            # Update start date for next iteration
-            start_date = current_time
-            
             # Print statistics and recent logs
             current_time_sec = time.time()
             if current_time_sec - last_print_time >= print_interval:
@@ -873,7 +1051,7 @@ def main():
                 last_print_time = current_time_sec
             
             # Minimal sleep to maintain high throughput
-            time.sleep(0.001)  # 1ms sleep for maximum throughput
+            time.sleep(0.001)
             
     except KeyboardInterrupt:
         print("\nStopping log generation...")

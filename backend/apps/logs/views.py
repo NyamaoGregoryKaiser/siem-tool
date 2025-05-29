@@ -17,6 +17,8 @@ from bson import ObjectId
 from dateutil.parser import parse as parse_date
 import time
 import random
+import geoip2.database
+import os
 
 from .models import SecurityLog, AlertRule, Alert
 from .serializers import (
@@ -817,13 +819,13 @@ def os_severity_distribution(request):
 
 @swagger_auto_schema(
     method='get',
-    responses={200: openapi.Response(description="Critical alerts from the past 10 hours")}
+    responses={200: openapi.Response(description="Latest critical alerts")}
 )
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def critical_alerts(request):
     """
-    Return critical alerts from the past 10 hours.
+    Return latest 3-5 critical alerts.
     """
     try:
         # Connect to MongoDB
@@ -833,28 +835,14 @@ def critical_alerts(request):
         if logs_collection is None:
             return Response([])
 
-        # Calculate timestamp for 10 hours ago
-        ten_hours_ago = datetime.now() - timedelta(hours=10)
-        ten_hours_ago_str = ten_hours_ago.strftime('%Y-%m-%d %H:%M:%S +0300')
-        print(f"Debug - Looking for alerts since: {ten_hours_ago_str}")
-
-        # Generate random limit between 3 and 5
-        random_limit = random.randint(3, 5)
-        print(f"Debug - Using random limit: {random_limit}")
-
-        # Pipeline to get critical alerts
+        # Pipeline to get latest critical alerts
         pipeline = [
-            # Match both FailureAudit and Error events from the last 10 hours
+            # Match both FailureAudit and Error events
             {
                 "$match": {
-                    "$and": [
-                        {
-                            "$or": [
-                                {"EventType": "FailureAudit"},
-                                {"EventType": "Error"}
-                            ]
-                        },
-                        {"TimeGenerated": {"$gte": ten_hours_ago_str}}
+                    "$or": [
+                        {"EventType": "FailureAudit"},
+                        {"EventType": "Error"}
                     ]
                 }
             },
@@ -865,6 +853,7 @@ def critical_alerts(request):
                     "ComputerName": 1,
                     "OperatingSystem": 1,
                     "EventType": 1,
+                    "SourceIP": 1,
                     "_id": 1
                 }
             },
@@ -874,25 +863,16 @@ def critical_alerts(request):
                     "TimeGenerated": -1
                 }
             },
-            # Limit to random number between 3 and 5
+            # Limit to 5 results
             {
-                "$limit": random_limit
+                "$limit": 5
             }
         ]
 
         try:
             # Execute the pipeline
             results = list(logs_collection.aggregate(pipeline))
-            print(f"Debug - Found {len(results)} critical alerts in the last 10 hours")
-            
-            # Debug print each result
-            for idx, result in enumerate(results):
-                print(f"Debug - Result {idx + 1}:")
-                print(f"  TimeGenerated: {result.get('TimeGenerated')}")
-                print(f"  ComputerName: {result.get('ComputerName')}")
-                print(f"  OperatingSystem: {result.get('OperatingSystem')}")
-                print(f"  EventType: {result.get('EventType')}")
-                print(f"  ID: {result.get('_id')}")
+            print(f"Debug - Found {len(results)} latest critical alerts")
             
             # Format results for frontend
             formatted_results = []
@@ -901,9 +881,9 @@ def critical_alerts(request):
                     'id': str(result.get('_id')),
                     'timestamp': result.get('TimeGenerated'),
                     'source': result.get('ComputerName', 'Unknown'),
-                    'type': result.get('OperatingSystem', 'Windows 11 Home')
+                    'type': result.get('OperatingSystem', 'Windows 11 Home'),
+                    'source_ip': result.get('SourceIP', '')
                 }
-                print(f"Debug - Formatted result: {formatted_result}")
                 formatted_results.append(formatted_result)
 
             return Response(formatted_results)
@@ -916,3 +896,35 @@ def critical_alerts(request):
         print('ERROR in critical_alerts:', e)
         traceback.print_exc()
         return Response({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+@swagger_auto_schema(
+    operation_description="Get location information for an IP address",
+    responses={200: "Location information for the IP address"}
+)
+def get_ip_location(request, ip):
+    try:
+        # Initialize the reader with the database path
+        db_path = os.path.join(settings.GEOIP_PATH, 'GeoLite2-City.mmdb')
+        print(f"Using GeoIP database at: {db_path}")  # Debug print
+        reader = geoip2.database.Reader(db_path)
+        
+        # Look up the IP
+        response = reader.city(ip)
+        
+        # Return the location data
+        return Response({
+            'ip': ip,
+            'country': response.country.name,
+            'city': response.city.name,
+            'latitude': response.location.latitude,
+            'longitude': response.location.longitude
+        })
+    except geoip2.errors.AddressNotFoundError:
+        return Response({'error': f'IP address {ip} not found in database'}, status=404)
+    except Exception as e:
+        print(f"Error looking up IP {ip}: {str(e)}")
+        return Response({'error': str(e)}, status=400)
+    finally:
+        if 'reader' in locals():
+            reader.close()

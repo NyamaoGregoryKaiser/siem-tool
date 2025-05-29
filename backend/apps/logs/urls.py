@@ -17,4 +17,5 @@ urlpatterns = [
     path('<str:log_id>/', views.get_log_detail, name='log_detail'),
     path('analytics/os-severity-distribution/', views.os_severity_distribution, name='os-severity-distribution'),
     path('analytics/critical-alerts/', views.critical_alerts, name='critical-alerts'),
+    path('analytics/ip-location/<str:ip>/', views.get_ip_location, name='ip-location'),
 ]
