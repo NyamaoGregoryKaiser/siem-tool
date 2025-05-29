@@ -12,6 +12,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import './App.css';
 import Profile from './components/profile/Profile';
+import QueueList from './components/analyst/QueueList';
 
 const theme = createTheme({
   palette: {
@@ -86,6 +87,16 @@ function App() {
                 <ProtectedRoute>
                   <Layout>
                     <LiveLogs />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/analyst-queue"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <QueueList />
                   </Layout>
                 </ProtectedRoute>
               }

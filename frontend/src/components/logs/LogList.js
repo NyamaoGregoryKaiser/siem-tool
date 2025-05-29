@@ -7,6 +7,8 @@ import {
   ClockIcon,
   ServerIcon,
   EyeIcon,
+  FlagIcon,
+  CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import api from '../../services/api';
 
@@ -17,6 +19,8 @@ const LogList = () => {
   const [computerNames, setComputerNames] = useState([]);
   const [deviceStats, setDeviceStats] = useState({});
   const [severityLogs, setSeverityLogs] = useState({});
+  const [sending, setSending] = useState({});
+  const [success, setSuccess] = useState({});
   const [filters, setFilters] = useState({
     search: '',
     severity: '',
@@ -85,33 +89,35 @@ const LogList = () => {
       // Map frontend filter keys to backend query parameters
       const filterMapping = {
         search: 'search',
-        severity: 'severity',
+        severity: 'EventType',
         device_name: 'ComputerName',
-        source_ip: 'source_ip',
+        source_ip: 'SourceIP',
         start_date: 'start_date',
         end_date: 'end_date',
-        sort_order: 'sort_order'
+        sort_order: 'sort'
       };
       
       // Map severity values based on EventType
       const severityMapping = {
-        'critical': { event_type: 'FailureAudit' },
-        'high': { event_type: 'Warning' },
-        'moderate': { event_type: 'Error' },
-        'low': { event_type: ['SuccessAudit', 'Information', 'Success'] }
+        'critical': 'FailureAudit',
+        'high': 'Warning',
+        'moderate': 'Error',
+        'low': ['SuccessAudit', 'Information', 'Success']
       };
       
       Object.keys(filters).forEach(key => {
         if (filters[key]) {
           if (key === 'severity') {
             const severity = severityMapping[filters[key]];
-            if (Array.isArray(severity.event_type)) {
-              severity.event_type.forEach(type => {
+            if (Array.isArray(severity)) {
+              severity.forEach(type => {
                 params.append('EventType', type);
               });
             } else {
-              params.append('EventType', severity.event_type);
+              params.append('EventType', severity);
             }
+          } else if (key === 'device_name') {
+            params.append('ComputerName', filters[key]);
           } else if (key === 'start_date' || key === 'end_date') {
             // Convert datetime-local input to match TimeGenerated format
             const date = new Date(filters[key]);
@@ -127,7 +133,7 @@ const LogList = () => {
             }).replace(',', '');
             params.append(filterMapping[key], formattedDate);
           } else if (key === 'sort_order') {
-            params.append('sort_order', filters[key]);
+            params.append('sort', filters[key] === 'desc' ? '-TimeGenerated' : 'TimeGenerated');
           } else {
             params.append(filterMapping[key], filters[key]);
           }
@@ -213,16 +219,68 @@ const LogList = () => {
   };
 
   const getTechnique = (level, eventType, status) => {
+    // MITRE ATT&CK technique mapping
+    const techniqueMapping = {
+      'T1110.001': 'T1110.001 - Brute Force: Password Guessing',
+      'T1098': 'T1098 - Account Manipulation',
+      'T1218': 'T1218 - Signed Binary Proxy Execution',
+      'T1078': 'T1078 - Valid Accounts',
+      'T1059.001': 'T1059.001 - PowerShell',
+      'T1059.003': 'T1059.003 - Windows Command Shell',
+      'T1059.005': 'T1059.005 - Visual Basic',
+      'T1547.001': 'T1547.001 - Registry Run Keys / Startup Folder',
+      'T1053.005': 'T1053.005 - Scheduled Task',
+      'T1068': 'T1068 - Exploitation for Privilege Escalation',
+      'T1548.002': 'T1548.002 - Bypass User Account Control',
+      'T1027': 'T1027 - Obfuscated Files or Information',
+      'T1562.001': 'T1562.001 - Disable or Modify Tools',
+      'T1110': 'T1110 - Brute Force',
+      'T1110.003': 'T1110.003 - Password Spraying',
+      'T1003.001': 'T1003.001 - LSASS Memory',
+      'T1083': 'T1083 - File and Directory Discovery',
+      'T1018': 'T1018 - Remote System Discovery',
+      'T1057': 'T1057 - Process Discovery',
+      'T1021.001': 'T1021.001 - Remote Desktop Protocol',
+      'T1075': 'T1075 - Pass the Hash',
+      'T1071.001': 'T1071.001 - Web Protocols',
+      'T1105': 'T1105 - Ingress Tool Transfer',
+      'T1041': 'T1041 - Exfiltration Over C2 Channel',
+      'T1486': 'T1486 - Data Encrypted for Impact',
+      'T1565.001': 'T1565.001 - Stored Data Manipulation'
+    };
+
     if (level === 1 || eventType === 'Error' || status === 'Critical' ||
         level === 2 || eventType === 'Warning' || eventType === 'FailureAudit' || status === 'High') {
-      const techniques = ['T1078', 'T1110', 'T1110.001', 'T1021.004', 'T1218', 'T1098'];
-      return techniques[Math.floor(Math.random() * techniques.length)];
+      const techniques = Object.keys(techniqueMapping);
+      const randomTechnique = techniques[Math.floor(Math.random() * techniques.length)];
+      return techniqueMapping[randomTechnique] || randomTechnique;
     }
     return null;
   };
 
   const formatTimestamp = (timestamp) => {
     return new Date(timestamp).toLocaleString();
+  };
+
+  const handleSendToInvestigation = async (logId) => {
+    try {
+      setSending(prev => ({ ...prev, [logId]: true }));
+      setError(null);
+      setSuccess(prev => ({ ...prev, [logId]: false }));
+
+      await api.post('/logs/analyst-queue/add/', {
+        log_id: logId,
+        priority: 'medium', // Default priority
+        notes: 'Sent for investigation from logs list'
+      });
+
+      setSuccess(prev => ({ ...prev, [logId]: true }));
+    } catch (error) {
+      console.error('Error sending to investigation:', error);
+      setError(error.response?.data?.message || 'Failed to send to investigation');
+    } finally {
+      setSending(prev => ({ ...prev, [logId]: false }));
+    }
   };
 
   return (
@@ -494,13 +552,29 @@ const LogList = () => {
                         {log.description}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <Link
-                          to={`/logs/${log._id}`}
-                          className="inline-flex items-center text-blue-600 hover:text-blue-900"
-                        >
-                          <EyeIcon className="h-4 w-4 mr-1" />
-                          View
-                        </Link>
+                        <div className="flex items-center space-x-4">
+                          <Link
+                            to={`/logs/${log._id}`}
+                            className="inline-flex items-center text-blue-600 hover:text-blue-900"
+                          >
+                            <EyeIcon className="h-4 w-4 mr-1" />
+                            View
+                          </Link>
+                          <button
+                            onClick={() => handleSendToInvestigation(log._id)}
+                            disabled={sending[log._id]}
+                            className="inline-flex items-center text-blue-600 hover:text-blue-900 disabled:opacity-50"
+                          >
+                            <FlagIcon className="h-4 w-4 mr-1" />
+                            {sending[log._id] ? 'Sending...' : 'Send to Investigation'}
+                          </button>
+                          {success[log._id] && (
+                            <span className="inline-flex items-center text-green-600">
+                              <CheckCircleIcon className="h-4 w-4 mr-1" />
+                              Sent
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

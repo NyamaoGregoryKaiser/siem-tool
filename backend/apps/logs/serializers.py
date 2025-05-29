@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SecurityLog, AlertRule, Alert, Log
+from .models import SecurityLog, AlertRule, Alert, Log, AnalystQueue
 
 class SecurityLogSerializer(serializers.ModelSerializer):
     class Meta:
@@ -80,3 +80,15 @@ class LogSerializer(serializers.ModelSerializer):
                  'event_type', 'severity', 'message', 'raw_log', 
                  'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+class AnalystQueueSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnalystQueue
+        fields = ['_id', 'log_id', 'added_by', 'added_at', 'status', 'priority', 
+                 'notes', 'resolution', 'resolved_at', 'resolved_by']
+        read_only_fields = ['_id', 'added_at', 'resolved_at']
+
+class AnalystQueueUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnalystQueue
+        fields = ['status', 'priority', 'notes', 'resolution', 'resolved_by']

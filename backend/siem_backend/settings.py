@@ -181,6 +181,6 @@ AUTHENTICATION_BACKENDS = [
 CONTENT_TYPES = False
 
 # GeoIP2 settings
-GEOIP_PATH = os.path.join(BASE_DIR, 'GeoLite2-City', 'GeoLite2-City_20250528')
+GEOIP_PATH = os.path.join(BASE_DIR, 'GeoLite2-City_20250528')
 MAXMIND_ACCOUNT_ID = '1175967'
 MAXMIND_LICENSE_KEY = os.getenv('MAXMIND_LICENSE_KEY', '')  # Get from environment variable

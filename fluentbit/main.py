@@ -34,7 +34,7 @@ app.add_middleware(
 try:
     logger.info("Attempting to connect to MongoDB...")
     client = MongoClient("mongodb://localhost:27017/")
-    db = client["siem_db"]
+    db = client["log_anomaly"]
     logs_collection = db["logs"]
     # Test the connection
     client.admin.command('ping')

@@ -174,3 +174,22 @@ class Log(models.Model):
 
     def __str__(self):
         return f"{self.event_type} - {self.source_ip} -> {self.destination_ip}"
+
+class AnalystQueue(djongo_models.Model):
+    _id = djongo_models.ObjectIdField()
+    log_id = models.CharField(max_length=100)  # Reference to the original log
+    added_by = models.CharField(max_length=100)  # Username of the analyst
+    added_at = models.DateTimeField(default=datetime.now)
+    status = models.CharField(max_length=20, default='pending')  # pending, investigating, resolved
+    priority = models.CharField(max_length=20, default='low')  # low, medium, high
+    notes = models.TextField(null=True, blank=True)
+    resolution = models.TextField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.CharField(max_length=100, null=True, blank=True)
+
+    class Meta:
+        db_table = 'analyst_queue'
+        ordering = ['-added_at']
+
+    def __str__(self):
+        return f"Queue Item {self._id} - Status: {self.status}"

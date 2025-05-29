@@ -23,7 +23,8 @@ import os
 from .models import SecurityLog, AlertRule, Alert
 from .serializers import (
     SecurityLogSerializer, SecurityLogListSerializer, SecurityLogStatsSerializer,
-    AlertRuleSerializer, AlertSerializer, AlertUpdateSerializer, LogFilterSerializer
+    AlertRuleSerializer, AlertSerializer, AlertUpdateSerializer, LogFilterSerializer,
+    AnalystQueueSerializer, AnalystQueueUpdateSerializer
 )
 
 # In-memory cache for dashboard stats
@@ -78,6 +79,13 @@ def get_logs(request):
             ]
         if request.GET.get('source_ip'):
             query['SourceIP'] = request.GET['source_ip']
+        if request.GET.get('EventType'):
+            # Handle multiple EventType values
+            event_types = request.GET.getlist('EventType')
+            if len(event_types) > 1:
+                query['EventType'] = {'$in': event_types}
+            else:
+                query['EventType'] = event_types[0]
         if request.GET.get('Level__gte'):
             query['Level'] = query.get('Level', {})
             query['Level']['$gte'] = int(request.GET['Level__gte'])
@@ -928,3 +936,192 @@ def get_ip_location(request, ip):
     finally:
         if 'reader' in locals():
             reader.close()
+
+@swagger_auto_schema(
+    method='get',
+    responses={200: AnalystQueueSerializer(many=True)}
+)
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_analyst_queue(request):
+    """
+    Get all items in the analyst queue
+    """
+    try:
+        print("Starting get_analyst_queue view")
+        # Connect to MongoDB
+        client = MongoClient(settings.DATABASES['logs']['CLIENT']['host'])
+        print(f"Connected to MongoDB at {settings.DATABASES['logs']['CLIENT']['host']}")
+        db = client[settings.DATABASES['logs']['NAME']]
+        print(f"Using database: {settings.DATABASES['logs']['NAME']}")
+        
+        # Create collection if it doesn't exist
+        if 'analysts_queue' not in db.list_collection_names():
+            print("Creating analysts_queue collection")
+            db.create_collection('analysts_queue')
+        
+        queue_collection = db['analysts_queue']
+        print("Got queue collection")
+
+        # Get queue items
+        queue_items = list(queue_collection.find().sort('added_at', -1))
+        print(f"Found {len(queue_items)} queue items")
+        
+        # Convert ObjectId to string and get log details
+        formatted_items = []
+        for item in queue_items:
+            try:
+                # Convert ObjectId to string for _id and log_id
+                item['_id'] = str(item['_id'])
+                if 'log_id' in item:
+                    item['log_id'] = str(item['log_id'])
+                
+                # Get user details from the users collection
+                try:
+                    user = db['users'].find_one({'username': item['added_by']})
+                    if user:
+                        item['added_by'] = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or item['added_by']
+                except Exception as e:
+                    print(f"Error getting user details for {item['added_by']}: {str(e)}")
+                
+                # Get the original log details if log_id exists
+                if 'log_id' in item:
+                    try:
+                        log = db['logs'].find_one({'_id': ObjectId(item['log_id'])})
+                        if log:
+                            log['_id'] = str(log['_id'])
+                            item['log_details'] = log
+                    except Exception as e:
+                        print(f"Error getting log details for item {item['_id']}: {str(e)}")
+                        item['log_details'] = None
+                
+                formatted_items.append(item)
+            except Exception as e:
+                print(f"Error formatting queue item {item.get('_id')}: {str(e)}")
+                continue
+
+        return Response(formatted_items)
+    except Exception as e:
+        import traceback
+        print('ERROR in get_analyst_queue:', e)
+        print('Full traceback:')
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=500)
+
+@swagger_auto_schema(
+    method='post',
+    request_body=AnalystQueueSerializer,
+    responses={201: AnalystQueueSerializer}
+)
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def add_to_analyst_queue(request):
+    """
+    Add a log to the analyst queue
+    """
+    try:
+        # Connect to MongoDB
+        client = MongoClient(settings.DATABASES['logs']['CLIENT']['host'])
+        db = client[settings.DATABASES['logs']['NAME']]
+        
+        # Create collection if it doesn't exist
+        if 'analysts_queue' not in db.list_collection_names():
+            db.create_collection('analysts_queue')
+            
+        queue_collection = db['analysts_queue']
+
+        # Get user details
+        user = db['users'].find_one({'username': request.user.username})
+        added_by = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() if user else request.user.username
+
+        # Create queue item
+        queue_item = {
+            'log_id': str(request.data['log_id']),  # Convert to string to store the ObjectId
+            'added_by': added_by,
+            'added_at': datetime.now(),
+            'status': 'pending',
+            'priority': request.data.get('priority', 'low'),
+            'notes': request.data.get('notes', '')
+        }
+
+        # Insert into queue
+        result = queue_collection.insert_one(queue_item)
+        queue_item['_id'] = str(result.inserted_id)
+
+        return Response(queue_item, status=201)
+    except Exception as e:
+        import traceback
+        print('ERROR in add_to_analyst_queue:', e)
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=500)
+
+@swagger_auto_schema(
+    method='put',
+    request_body=AnalystQueueUpdateSerializer,
+    responses={200: AnalystQueueSerializer}
+)
+@api_view(['PUT'])
+@permission_classes([permissions.IsAuthenticated])
+def update_analyst_queue_item(request, queue_id):
+    """
+    Update an item in the analyst queue
+    """
+    try:
+        # Connect to MongoDB
+        client = MongoClient(settings.DATABASES['logs']['CLIENT']['host'])
+        db = client[settings.DATABASES['logs']['NAME']]
+        queue_collection = db['analysts_queue']
+
+        # Update queue item
+        update_data = request.data.copy()
+        if update_data.get('status') == 'resolved':
+            update_data['resolved_at'] = datetime.now()
+            update_data['resolved_by'] = request.user.username
+
+        result = queue_collection.update_one(
+            {'_id': ObjectId(queue_id)},
+            {'$set': update_data}
+        )
+
+        if result.modified_count == 0:
+            return Response({'error': 'Queue item not found'}, status=404)
+
+        # Get updated item
+        updated_item = queue_collection.find_one({'_id': ObjectId(queue_id)})
+        updated_item['_id'] = str(updated_item['_id'])
+
+        return Response(updated_item)
+    except Exception as e:
+        import traceback
+        print('ERROR in update_analyst_queue_item:', e)
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=500)
+
+@swagger_auto_schema(
+    method='delete',
+    responses={204: None}
+)
+@api_view(['DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def delete_analyst_queue_item(request, queue_id):
+    """
+    Delete an item from the analyst queue
+    """
+    try:
+        # Connect to MongoDB
+        client = MongoClient(settings.DATABASES['logs']['CLIENT']['host'])
+        db = client[settings.DATABASES['logs']['NAME']]
+        queue_collection = db['analysts_queue']
+
+        # Delete the queue item
+        result = queue_collection.delete_one({'_id': ObjectId(queue_id)})
+
+        if result.deleted_count == 0:
+            return Response({'error': 'Queue item not found'}, status=404)
+
+        return Response(status=204)
+    except Exception as e:
+        import traceback
+        print('ERROR in delete_analyst_queue_item:', e)
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=500)

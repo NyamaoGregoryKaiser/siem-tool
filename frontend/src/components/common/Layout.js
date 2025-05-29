@@ -11,6 +11,7 @@ import {
   UserIcon,
   BellIcon,
   TvIcon,
+  QueueListIcon,
 } from '@heroicons/react/24/outline';
 
 const Layout = ({ children }) => {
@@ -37,6 +38,12 @@ const Layout = ({ children }) => {
       href: '/live-logs',
       icon: TvIcon,
       current: location.pathname === '/live-logs',
+    },
+    {
+      name: 'Analyst Queue',
+      href: '/analyst-queue',
+      icon: QueueListIcon,
+      current: location.pathname === '/analyst-queue',
     },
     {
       name: 'My Profile',
